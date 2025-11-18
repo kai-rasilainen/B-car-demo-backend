@@ -1,0 +1,12 @@
+# Web Server B1 - Docker ignore
+node_modules
+npm-debug.log*
+.npm
+.env
+.env.local
+.env.production
+coverage/
+*.log
+.nyc_output
+.DS_Store
+Thumbs.db
