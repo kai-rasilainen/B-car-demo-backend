@@ -5,6 +5,7 @@ const { Client } = require('pg');
 const redis = require('redis');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+const MockPressureProvider = require('./utils/mockPressureProvider');
 require('dotenv').config();
 
 const app = express();
@@ -478,6 +479,175 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   };
   res.json(status);
+});
+
+/**
+ * @swagger
+ * /api/monitoring/tire-pressure/{carId}:
+ *   get:
+ *     summary: Get current tire pressure for a car
+ *     description: Returns current tire pressure readings. Uses mock data if USE_MOCK_DATA=true or database unavailable.
+ *     tags: [Monitoring]
+ *     parameters:
+ *       - in: path
+ *         name: carId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The car identifier
+ *     responses:
+ *       200:
+ *         description: Current tire pressure data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 carId:
+ *                   type: string
+ *                 timestamp:
+ *                   type: string
+ *                 pressures:
+ *                   type: object
+ *                 unit:
+ *                   type: string
+ *                 isMockData:
+ *                   type: boolean
+ */
+app.get('/api/monitoring/tire-pressure/:carId', async (req, res) => {
+  const { carId } = req.params;
+  const useMockData = process.env.USE_MOCK_DATA === 'true';
+
+  try {
+    if (useMockData || !mongoClient) {
+      // Use mock data
+      const mockData = MockPressureProvider.getCurrentPressure(carId);
+      return res.json({
+        ...mockData,
+        isMockData: true
+      });
+    }
+
+    // Try to get real data from database
+    const db = mongoClient.db(MONGO_DB);
+    const data = await db.collection('tire_pressure').findOne(
+      { carId },
+      { sort: { timestamp: -1 } }
+    );
+
+    if (data) {
+      res.json({
+        ...data,
+        isMockData: false
+      });
+    } else {
+      // Fallback to mock data if no real data found
+      const mockData = MockPressureProvider.getCurrentPressure(carId);
+      res.json({
+        ...mockData,
+        isMockData: true
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching tire pressure:', error);
+    // Fallback to mock data on error
+    const mockData = MockPressureProvider.getCurrentPressure(carId);
+    res.json({
+      ...mockData,
+      isMockData: true
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/monitoring/tire-pressure/{carId}/history:
+ *   get:
+ *     summary: Get historical tire pressure data for a car
+ *     description: Returns tire pressure readings over time. Uses mock data if USE_MOCK_DATA=true or database unavailable.
+ *     tags: [Monitoring]
+ *     parameters:
+ *       - in: path
+ *         name: carId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The car identifier
+ *       - in: query
+ *         name: days
+ *         schema:
+ *           type: integer
+ *           default: 7
+ *         description: Number of days of history to retrieve
+ *     responses:
+ *       200:
+ *         description: Historical tire pressure data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 carId:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                 isMockData:
+ *                   type: boolean
+ */
+app.get('/api/monitoring/tire-pressure/:carId/history', async (req, res) => {
+  const { carId } = req.params;
+  const days = parseInt(req.query.days) || 7;
+  const useMockData = process.env.USE_MOCK_DATA === 'true';
+
+  try {
+    if (useMockData || !mongoClient) {
+      // Use mock data
+      const mockData = MockPressureProvider.getHistoricalPressure(carId, days);
+      return res.json({
+        carId,
+        data: mockData,
+        isMockData: true
+      });
+    }
+
+    // Try to get real data from database
+    const db = mongoClient.db(MONGO_DB);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const data = await db.collection('tire_pressure')
+      .find({
+        carId,
+        timestamp: { $gte: startDate.toISOString() }
+      })
+      .sort({ timestamp: 1 })
+      .toArray();
+
+    if (data && data.length > 0) {
+      res.json({
+        carId,
+        data,
+        isMockData: false
+      });
+    } else {
+      // Fallback to mock data if no real data found
+      const mockData = MockPressureProvider.getHistoricalPressure(carId, days);
+      res.json({
+        carId,
+        data: mockData,
+        isMockData: true
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching tire pressure history:', error);
+    // Fallback to mock data on error
+    const mockData = MockPressureProvider.getHistoricalPressure(carId, days);
+    res.json({
+      carId,
+      data: mockData,
+      isMockData: true
+    });
+  }
 });
 
 // Start server
